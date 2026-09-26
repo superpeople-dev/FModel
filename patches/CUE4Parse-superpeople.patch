@@ -1,0 +1,152 @@
+--- a/CUE4Parse/UE4/Versions/EGame.cs
++++ b/CUE4Parse/UE4/Versions/EGame.cs
+@@ -98,6 +98,7 @@
+         GAME_Placeholder3 = GAME_UE4_25 + 13,
+         GAME_Back4Blood = GAME_UE4_25 + 14, // UE 4.25 Plus
+         GAME_NiNoKuniCrossWorlds = GAME_UE4_25 + 15,
++        GAME_SuperPeople = GAME_UE4_25 + 16,
+     GAME_UE4_26 = GameUtils.GameUe4Base + (26 << 16),
+         GAME_GTATheTrilogyDefinitiveEdition = GAME_UE4_26 + 1,
+         GAME_UE4_26_Plus = GAME_UE4_26 + 2,
+--- a/CUE4Parse/FileProvider/Vfs/AbstractVfsFileProvider.cs
++++ b/CUE4Parse/FileProvider/Vfs/AbstractVfsFileProvider.cs
+@@ -78,6 +78,7 @@
+                     or GAME_Splitgate2 or GAME_Empulse => CustomAesKeyExpansion.DecryptWithRoundKeys,
+ 
+                 GAME_ApexLegendsMobile => ApexLegendsMobileAes.DecryptApexMobile,
++                GAME_SuperPeople => CUE4Parse.GameTypes.SuperPeople.Encryption.Aes.SuperPeopleAes.Decrypt,
+                 GAME_Snowbreak => SnowbreakAes.SnowbreakDecrypt,
+                 GAME_MarvelRivals or GAME_TamasShadowveil => NetEaseAes.NetEaseDecrypt,
+                 GAME_Undawn => ToaaAes.ToaaDecrypt,
+--- /dev/null
++++ b/CUE4Parse/GameTypes/SuperPeople/Encryption/Aes/SuperPeopleAes.cs
+@@ -0,0 +1,61 @@
++using System.Buffers.Binary;
++using System.Numerics;
++using CUE4Parse.Encryption.Aes;
++using CUE4Parse.UE4.VirtualFileSystem;
++
++namespace CUE4Parse.GameTypes.SuperPeople.Encryption.Aes;
++
++public static class SuperPeopleAes
++{
++    // Ciphertext substitution from spiritovod's Super People QuickBMS decryptAll.
++    private static ReadOnlySpan<byte> Substitution =>
++    [
++        0x3A, 0x04, 0xA2, 0x92, 0x41, 0x91, 0x2A, 0x09, 0xF3, 0xD3, 0xF7, 0x70, 0x93, 0x78, 0xDB, 0xAB,
++        0x9C, 0x6D, 0xA5, 0x39, 0x2B, 0xDF, 0xE7, 0xC6, 0x26, 0x75, 0x64, 0x79, 0x0A, 0x84, 0xA1, 0xDE,
++        0x80, 0xB3, 0x4B, 0xE8, 0x13, 0x5A, 0x77, 0x17, 0x34, 0xE3, 0x1F, 0x45, 0xB0, 0xA7, 0x69, 0x7B,
++        0xDC, 0x9E, 0xD8, 0x9A, 0x38, 0xA3, 0xFB, 0xAC, 0x0B, 0x6E, 0x68, 0x96, 0x15, 0x7E, 0xFC, 0x89,
++        0x03, 0x57, 0x42, 0xBF, 0xE0, 0x8D, 0x32, 0x3F, 0x0D, 0xFF, 0xA9, 0x62, 0x16, 0xB9, 0xD0, 0xD1,
++        0xFA, 0xEF, 0xC7, 0x01, 0x20, 0x0C, 0xE5, 0x8F, 0xF9, 0x44, 0x4F, 0xEC, 0x6F, 0xD7, 0x12, 0x60,
++        0xC2, 0x1A, 0x36, 0xA6, 0x3C, 0x08, 0xF1, 0x1E, 0x2F, 0x29, 0x65, 0x82, 0x5F, 0x87, 0x6A, 0x50,
++        0x81, 0x18, 0xF4, 0xBD, 0x99, 0x53, 0x35, 0xE4, 0xC8, 0x37, 0x1C, 0xBE, 0xAE, 0x97, 0xC9, 0x3D,
++        0x49, 0x48, 0x52, 0x98, 0xDA, 0xF0, 0x8E, 0xE2, 0x86, 0x8C, 0x31, 0x4C, 0x95, 0x2E, 0xD6, 0xCB,
++        0xC0, 0xF5, 0x72, 0xB7, 0x7D, 0xEA, 0xFD, 0x1B, 0x94, 0xBB, 0x56, 0xF6, 0x30, 0xF2, 0xE6, 0xED,
++        0x8A, 0x0F, 0x4D, 0xB8, 0xB6, 0xB4, 0xFE, 0x2D, 0xB1, 0x47, 0x67, 0x1D, 0x4E, 0x54, 0x33, 0x05,
++        0x66, 0x10, 0x73, 0xC4, 0xCA, 0x9B, 0xF8, 0xE1, 0x5D, 0xD9, 0x58, 0x59, 0x23, 0x22, 0x02, 0xAF,
++        0x27, 0xD5, 0x7F, 0x4A, 0xE9, 0xC3, 0x3B, 0x5B, 0xBC, 0xC5, 0x71, 0x21, 0x9F, 0x61, 0x90, 0xA4,
++        0x74, 0xCD, 0xB5, 0x83, 0xC1, 0xA8, 0x6B, 0x85, 0x0E, 0x3E, 0x40, 0xCC, 0xAA, 0x9D, 0x51, 0xAD,
++        0x55, 0x19, 0x25, 0x46, 0x88, 0x7A, 0x11, 0xEB, 0x06, 0xCE, 0x24, 0x5E, 0xD4, 0x7C, 0x8B, 0x28,
++        0xBA, 0xA0, 0x6C, 0x00, 0x14, 0x76, 0x43, 0xEE, 0xDD, 0xCF, 0xB2, 0x63, 0x5C, 0x07, 0x2C, 0xD2,
++    ];
++
++    public static byte[] Decrypt(byte[] bytes, int beginOffset, int count, bool isIndex,
++        IAesVfsReader reader, object? customData = null)
++        => Decrypt(bytes, beginOffset, count,
++            reader.AesKey ?? throw new InvalidOperationException("Super People decryption requires an AES key."));
++
++    public static byte[] Decrypt(byte[] bytes, int beginOffset, int count, FAesKey key)
++    {
++        ArgumentOutOfRangeException.ThrowIfNegative(beginOffset);
++        ArgumentOutOfRangeException.ThrowIfNegative(count);
++        if (beginOffset > bytes.Length - count)
++            throw new ArgumentException("The requested range exceeds the input buffer.", nameof(count));
++        if (count % 16 != 0)
++            throw new ArgumentException("Super People ciphertext must contain complete AES blocks.", nameof(count));
++
++        var result = bytes.AsSpan(beginOffset, count).ToArray();
++        var substitution = Substitution;
++        for (var i = 0; i < result.Length; i++)
++            result[i] = substitution[result[i]];
++
++        result.DecryptInPlace(key);
++        for (var i = 0; i < result.Length; i += 16)
++        {
++            var block = result.AsSpan(i, 16);
++            var first = BinaryPrimitives.ReadUInt64LittleEndian(block);
++            var second = BinaryPrimitives.ReadUInt64LittleEndian(block[8..]);
++            BinaryPrimitives.WriteUInt64LittleEndian(block, BitOperations.RotateLeft(first, 53));
++            BinaryPrimitives.WriteUInt64LittleEndian(block[8..], BitOperations.RotateLeft(second, 41));
++        }
++        return result;
++    }
++}
+--- /dev/null
++++ b/CUE4Parse.Tests/Encryption/SuperPeopleAesTests.cs
+@@ -0,0 +1,65 @@
++using CUE4Parse.Encryption.Aes;
++using CUE4Parse.FileProvider;
++using CUE4Parse.GameTypes.SuperPeople.Encryption.Aes;
++using CUE4Parse.UE4.Versions;
++using CUE4Parse.UE4.Pak;
++using CUE4Parse.UE4.Readers;
++
++namespace CUE4Parse.Tests.Encryption;
++
++public class SuperPeopleAesTests
++{
++    private static readonly FAesKey Key = new(Enumerable.Range(0, 32).Select(i => (byte)i).ToArray());
++    private static readonly byte[] Ciphertext = Convert.FromHexString("25967be1e97962e03b2f75d84fb03a5d5b05fdb1a09f3a7d7e0d43a49e38c0b24c956b9801d3de8b91a55862bfab4f25b289e59f96d357493c659e061bf15b4d");
++
++    [Fact]
++    public void DecryptsKnownVectorWithoutChangingInput()
++    {
++        var input = Ciphertext.ToArray();
++        var actual = SuperPeopleAes.Decrypt(input, 0, input.Length, Key);
++        Assert.Equal(Enumerable.Range(0, 64).Select(i => (byte)i).ToArray(), actual);
++        Assert.Equal(Ciphertext, input);
++    }
++
++    [Fact]
++    public void SupportsSubrangeInPaddedBuffer()
++    {
++        var input = new byte[71];
++        Ciphertext.CopyTo(input, 3);
++        Assert.Equal(Enumerable.Range(16, 32).Select(i => (byte)i).ToArray(),
++            SuperPeopleAes.Decrypt(input, 19, 32, Key));
++    }
++
++    [Fact]
++    public void RejectsPartialBlockAndOutOfBoundsRange()
++    {
++        Assert.Throws<ArgumentException>(() => SuperPeopleAes.Decrypt(Ciphertext, 0, 15, Key));
++        Assert.Throws<ArgumentException>(() => SuperPeopleAes.Decrypt(Ciphertext, 65, 0, Key));
++        Assert.Throws<ArgumentOutOfRangeException>(() => SuperPeopleAes.Decrypt(Ciphertext, -1, 16, Key));
++        Assert.Empty(SuperPeopleAes.Decrypt(Ciphertext, 64, 0, Key));
++    }
++
++    [Fact]
++    public void GameVersionSelectsCustomEncryption()
++    {
++        using var provider = new DefaultFileProvider(".", SearchOption.TopDirectoryOnly,
++            new VersionContainer(EGame.GAME_SuperPeople));
++        Assert.NotNull(provider.CustomEncryption);
++    }
++
++    [Fact]
++    public void MountsEncryptedVersion11IndexAndExtractsEncryptedPayload()
++    {
++        // Entirely synthetic archive using the build's standard v11 pak layout.
++        var bytes = Convert.FromBase64String("AAAAAAAAAAAQAAAAAAAAABAAAAAAAAAAAAAAANEaf13sZZjm+485vsePcqU31/M8AQAAAABJdx6aSZySIId3xPLTUiOSMsTkBrCZGYOXb4TLvgBlwNs5ubO7+leix2+sjbpaHsVXL0rChUT7Wmp4PPuZjNu525GH6IGWLoo53z5qFiOdCp3O86QGgMxOSggzbviNJiAuB9vyeQFVLzkIh/EgD/NMb66d/1T2ko02P7Rz3m3yVcknV8oVxF2L3fmJR13DMxRDH9MhYCTSzN7rEsyVYkMEnc7zpAaAzE5KCDNu+I0mINK9doR3t4CpLuIvbieM1IidpMlI3j5fjgAShfbRDK+Mnc7zpAaAzE5KCDNu+I0mIAAAAAAAAAAAAAAAAAAAAAAB4RJvWgsAAABFAAAAAAAAAJAAAAAAAAAAWRYwfDs21q8mbN1nf8DXks6Ed90AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
++        using var reader = new PakFileReader(new FByteArchive("synthetic.pak", bytes,
++            new VersionContainer(EGame.GAME_SuperPeople)));
++        reader.AesKey = Key;
++        reader.CustomEncryption = SuperPeopleAes.Decrypt;
++        Assert.True(reader.TestAesKey(Key));
++        reader.Mount(StringComparer.OrdinalIgnoreCase);
++        var file = Assert.Single(reader.Files).Value;
++        Assert.Equal("Example/Content/fixture.txt", file.Path);
++        Assert.Equal("Synthetic asset!"u8.ToArray(), file.Read());
++    }
++}

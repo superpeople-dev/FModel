@@ -1,0 +1,32 @@
+name: Super People build
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ superpeople ]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+      - name: Apply Super People support
+        working-directory: CUE4Parse
+        run: git apply --check ../patches/CUE4Parse-superpeople.patch; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; git apply ../patches/CUE4Parse-superpeople.patch
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Test encryption
+        run: dotnet test CUE4Parse/CUE4Parse.Tests/CUE4Parse.Tests.csproj -c Release -p:CUE4PARSE_SKIP_NATIVE=true --filter "FullyQualifiedName~Encryption"
+      - name: Publish FModel
+        run: dotnet publish FModel/FModel.csproj -c Release --no-self-contained -r win-x64 -f net10.0-windows -o ./artifacts/FModel-SuperPeople -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FModel-SuperPeople-win-x64
+          path: artifacts/FModel-SuperPeople/
+          if-no-files-found: error
